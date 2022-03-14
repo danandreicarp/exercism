@@ -13,38 +13,14 @@ pub fn sublist<T: PartialEq + Display + Debug>(
     _first_list: &[T],
     _second_list: &[T],
 ) -> Comparison {
-    let first_len = _first_list.len();
-    let second_len = _second_list.len();
+    let is_sublist = |first: &[T], second: &[T]| {
+        second.is_empty() || first.windows(second.len()).any(|slice| slice == second)
+    };
 
-    match (first_len, second_len) {
-        (0, 0) => Comparison::Equal,
-        (0, _) => Comparison::Sublist,
-        (_, 0) => Comparison::Superlist,
-        (first_len, second_len) if (first_len == second_len) => {
-            if _first_list[0..] == _second_list[0..] {
-                Comparison::Equal
-            } else {
-                Comparison::Unequal
-            }
-        }
-        (first_len, second_len) if (first_len > second_len) => {
-            if _first_list
-                .windows(second_len)
-                .any(|slice| slice == _second_list)
-            {
-                Comparison::Superlist
-            } else {
-                Comparison::Unequal
-            }
-        }
-        (first_len, _) => {
-            if _second_list
-                .windows(first_len)
-                .any(|slice| slice == _first_list)
-            {
-                return Comparison::Sublist;
-            }
-            Comparison::Unequal
-        }
+    match (_first_list, _second_list) {
+        (first, second) if first == second => Comparison::Equal,
+        (first, second) if is_sublist(first, second) => Comparison::Superlist,
+        (first, second) if is_sublist(second, first) => Comparison::Sublist,
+        _ => Comparison::Unequal,
     }
 }
