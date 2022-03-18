@@ -2,15 +2,20 @@
 // In order to pass the tests you can add-to or change any of this code.
 
 #[macro_export]
-macro_rules! a_planet {
-    ($name: ty, $years: literal) => {
-        impl Planet for $name {
-            fn years_during(d: &Duration) -> f64 {
-                let seconds_in_year = ($years as f64 * 31557600_f64);
-                println!("here one year has {} seconds", seconds_in_year);
-                d.seconds / seconds_in_year
+macro_rules! planets {
+    ( $(($name: ident, $years: literal)),+) => {
+        $(
+            #[derive(Debug)]
+            pub struct $name;
+
+            impl Planet for $name {
+                fn years_during(d: &Duration) -> f64 {
+                    let seconds_in_year = ($years as f64 * 31557600_f64);
+                    println!("on {:?} one year has {} seconds", $name, seconds_in_year);
+                    d.seconds / seconds_in_year
+                }
             }
-        }
+        )*
     };
 }
 
@@ -34,20 +39,13 @@ pub trait Planet {
     }
 }
 
-pub struct Mercury;
-pub struct Venus;
-pub struct Earth;
-pub struct Mars;
-pub struct Jupiter;
-pub struct Saturn;
-pub struct Uranus;
-pub struct Neptune;
-
-a_planet![Mercury, 0.2408467];
-a_planet![Venus, 0.61519726];
-a_planet![Earth, 1];
-a_planet![Mars, 1.8808158];
-a_planet![Jupiter, 11.862615];
-a_planet![Saturn, 29.447498];
-a_planet![Uranus, 84.016846];
-a_planet![Neptune, 164.79132];
+planets![
+    (Mercury, 0.2408467),
+    (Venus, 0.61519726),
+    (Earth, 1),
+    (Mars, 1.8808158),
+    (Jupiter, 11.862615),
+    (Saturn, 29.447498),
+    (Uranus, 84.016846),
+    (Neptune, 164.79132)
+];
