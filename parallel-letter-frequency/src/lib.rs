@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::ops::Deref;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::thread::JoinHandle;
 
@@ -7,26 +8,21 @@ pub fn frequency(input: &[&str], worker_count: usize) -> HashMap<char, usize> {
     println!("input length is: {}", input.len());
     println!("worker count is: {}", worker_count);
 
-    if worker_count < 2 {
+    let input = input.join("");
+
+    if worker_count < 2 || input.len() < 100 {
         single_threaded(input)
     } else {
-        multi_threaded(input, worker_count)
+        multi_threaded_shared(input, worker_count)
     }
 }
 
-fn single_threaded(input: &[&str]) -> HashMap<char, usize> {
-    parse(input.join(""))
-}
-
-fn multi_threaded(input: &[&str], worker_count: usize) -> HashMap<char, usize> {
-    let input = input.join("");
-    println!("entire input length is: {}", input.len());
-
+fn multi_threaded_shared(input: String, worker_count: usize) -> HashMap<char, usize> {
     let chunk_size = input.len() / worker_count;
-    println!("chuck size should be: {}", chunk_size);
 
-    let (sender, receiver) = mpsc::channel();
     let mut handlers = Vec::with_capacity(worker_count);
+
+    let char_count: Arc<Mutex<HashMap<char, usize>>> = Arc::new(Mutex::new(HashMap::new()));
 
     let mut chunk = 1;
     for i in 0..worker_count {
@@ -49,28 +45,29 @@ fn multi_threaded(input: &[&str], worker_count: usize) -> HashMap<char, usize> {
         );
 
         println!("spawning thread number {}", i);
-        handlers.push(parse_input_in_thread(text.to_owned(), &sender));
+        handlers.push(parse_and_merge(text.to_owned(), char_count.clone()));
     }
-
-    let result = combine_results(worker_count, receiver);
 
     for handler in handlers {
         handler.join().expect("error joining threads")
     }
 
-    result
+    let result = char_count.lock().unwrap();
+    result.deref().to_owned()
 }
 
-fn parse_input_in_thread(input: String, sender: &Sender<HashMap<char, usize>>) -> JoinHandle<()> {
-    let thread_sender = sender.clone();
-
+fn parse_and_merge(input: String, result: Arc<Mutex<HashMap<char, usize>>>) -> JoinHandle<()> {
     thread::spawn(move || {
-        parse_input_to_sender(input, thread_sender);
+        let char_count = parse(input);
+
+        for (&ch, i) in char_count.iter() {
+            *result.lock().unwrap().entry(ch).or_insert(0) += i;
+        }
     })
 }
 
-fn parse_input_to_sender(input: String, sender: Sender<HashMap<char, usize>>) {
-    sender.send(parse(input)).expect("send parse result failed");
+fn single_threaded(input: String) -> HashMap<char, usize> {
+    parse(input)
 }
 
 fn parse(input: String) -> HashMap<char, usize> {
@@ -87,28 +84,6 @@ fn parse(input: String) -> HashMap<char, usize> {
             }
         }
     }
+
     char_count
-}
-
-fn combine_results(
-    mut expected_results: usize,
-    receiver: Receiver<HashMap<char, usize>>,
-) -> HashMap<char, usize> {
-    let mut char_counts = HashMap::new();
-
-    while expected_results > 0 {
-        if let Ok(res) = receiver.try_recv() {
-            merge_maps(res, &mut char_counts);
-
-            expected_results -= 1;
-        }
-    }
-
-    char_counts
-}
-
-fn merge_maps(source: HashMap<char, usize>, dest: &mut HashMap<char, usize>) {
-    for (&ch, i) in source.iter() {
-        *dest.entry(ch).or_insert(0) += i;
-    }
 }
