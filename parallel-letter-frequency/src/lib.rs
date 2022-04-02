@@ -1,151 +1,114 @@
 use std::collections::HashMap;
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
-
-pub struct Worker {
-    thread: Option<thread::JoinHandle<()>>,
-}
-
-impl Worker {
-    fn new(receiver: Arc<Mutex<Receiver<Message>>>) -> Worker {
-        let thread = thread::spawn(move || loop {
-            let message = receiver
-                .lock()
-                .expect("poisoned mutex: another thread panicked")
-                .recv()
-                .expect("thread holding sending side of channel (ThreadPool) was shut down");
-
-            match message {
-                Message::NewJob(job) => {
-                    // worker got a job; executing...
-                    job();
-                }
-                Message::Terminate => {
-                    // terminating worker
-                    break;
-                }
-            }
-        });
-
-        Worker {
-            thread: Some(thread),
-        }
-    }
-}
-
-type Job = Box<dyn FnOnce() + Send + 'static>;
-
-pub struct ThreadPool {
-    workers: Vec<Worker>,
-    sender: Sender<Message>,
-}
-
-enum Message {
-    NewJob(Job),
-    Terminate,
-}
-
-impl ThreadPool {
-    pub fn new(worker_count: usize) -> ThreadPool {
-        assert!(worker_count > 0);
-
-        let (sender, receiver) = mpsc::channel();
-
-        let receiver = Arc::new(Mutex::new(receiver));
-
-        let mut workers = Vec::with_capacity(worker_count);
-        for _ in 0..worker_count {
-            workers.push(Worker::new(Arc::clone(&receiver)));
-        }
-
-        ThreadPool { workers, sender }
-    }
-
-    pub fn execute<F>(&self, f: F)
-    where
-        F: FnOnce() + Send + 'static,
-    {
-        let job = Box::new(f);
-        self.sender
-            .send(Message::NewJob(job))
-            .expect("send Job message failed in ThreadPool");
-    }
-}
-
-impl Drop for ThreadPool {
-    fn drop(&mut self) {
-        // sending terminate message to all workers
-        for _ in &self.workers {
-            self.sender
-                .send(Message::Terminate)
-                .expect("send Terminate message failed in ThreadPool");
-        }
-
-        // shutting down all workers
-        for worker in &mut self.workers {
-            // shutting down worker
-            if let Some(thread) = worker.thread.take() {
-                thread.join().expect("join failed on worker thread");
-            }
-        }
-    }
-}
+use std::thread::JoinHandle;
 
 pub fn frequency(input: &[&str], worker_count: usize) -> HashMap<char, usize> {
-    let mut result = HashMap::new();
+    println!("input length is: {}", input.len());
+    println!("worker count is: {}", worker_count);
 
-    let pool = ThreadPool::new(worker_count);
+    if worker_count < 2 {
+        single_threaded(input)
+    } else {
+        multi_threaded(input, worker_count)
+    }
+}
+
+fn single_threaded(input: &[&str]) -> HashMap<char, usize> {
+    parse(input.join(""))
+}
+
+fn multi_threaded(input: &[&str], worker_count: usize) -> HashMap<char, usize> {
+    let input = input.join("");
+    println!("entire input length is: {}", input.len());
+
+    let chunk_size = input.len() / worker_count;
+    println!("chuck size should be: {}", chunk_size);
 
     let (sender, receiver) = mpsc::channel();
+    let mut handlers = Vec::with_capacity(worker_count);
 
-    let mut expected_results = input.len();
-    for line in input.iter() {
-        let thread_sender = sender.clone();
-        let thread_line = line.to_owned().to_owned();
-        pool.execute(move || {
-            parse_line(thread_line, thread_sender);
-        });
+    let mut chunk = 1;
+    for i in 0..worker_count {
+        let start = i * chunk_size;
+        let end = if chunk != worker_count {
+            chunk_size * chunk
+        } else {
+            // on the last chunk, go to the end of the input
+            input.len()
+        };
 
-        if read_from_channel(&mut result, &receiver).is_ok() {
-            expected_results -= 1;
-        }
+        let text = &input[start..end];
+        chunk += 1;
+
+        println!(
+            "selected a text of length {}, from {} up to {}",
+            text.len(),
+            start,
+            end
+        );
+
+        println!("spawning thread number {}", i);
+        handlers.push(parse_input_in_thread(text.to_owned(), &sender));
     }
 
-    while expected_results > 0 {
-        if read_from_channel(&mut result, &receiver).is_ok() {
-            expected_results -= 1;
-        }
+    let result = combine_results(worker_count, receiver);
+
+    for handler in handlers {
+        handler.join().expect("error joining threads")
     }
 
     result
 }
 
-fn parse_line(line: String, sender: Sender<HashMap<char, usize>>) {
-    let mut thread_result = HashMap::new();
-    let line = line.to_lowercase();
-    for ch in line.chars() {
-        if ch.is_alphabetic() {
-            *thread_result.entry(ch).or_insert(0) += 1;
-        }
-    }
-    sender
-        .send(thread_result)
-        .expect("send parse_line message failed");
+fn parse_input_in_thread(input: String, sender: &Sender<HashMap<char, usize>>) -> JoinHandle<()> {
+    let thread_sender = sender.clone();
+
+    thread::spawn(move || {
+        parse_input_to_sender(input, thread_sender);
+    })
 }
 
-fn read_from_channel(
-    result: &mut HashMap<char, usize>,
-    receiver: &Receiver<HashMap<char, usize>>,
-) -> Result<bool, TryRecvError> {
-    return match receiver.try_recv() {
-        Ok(res) => {
-            for (&ch, i) in res.iter() {
-                let count = result.entry(ch).or_insert(0);
-                *count += i;
+fn parse_input_to_sender(input: String, sender: Sender<HashMap<char, usize>>) {
+    sender.send(parse(input)).expect("send parse result failed");
+}
+
+fn parse(input: String) -> HashMap<char, usize> {
+    let mut char_count = HashMap::new();
+
+    for ch in input.chars() {
+        if ch.is_alphabetic() {
+            if ch.is_lowercase() {
+                *char_count.entry(ch).or_insert(0) += 1;
+            } else {
+                *char_count
+                    .entry(ch.to_lowercase().next().unwrap())
+                    .or_insert(0) += 1;
             }
-            Ok(true)
         }
-        Err(error) => Err(error),
-    };
+    }
+    char_count
+}
+
+fn combine_results(
+    mut expected_results: usize,
+    receiver: Receiver<HashMap<char, usize>>,
+) -> HashMap<char, usize> {
+    let mut char_counts = HashMap::new();
+
+    while expected_results > 0 {
+        if let Ok(res) = receiver.try_recv() {
+            merge_maps(res, &mut char_counts);
+
+            expected_results -= 1;
+        }
+    }
+
+    char_counts
+}
+
+fn merge_maps(source: HashMap<char, usize>, dest: &mut HashMap<char, usize>) {
+    for (&ch, i) in source.iter() {
+        *dest.entry(ch).or_insert(0) += i;
+    }
 }

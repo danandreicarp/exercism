@@ -12,6 +12,12 @@ fn bench_tiny_parallel(b: &mut Bencher) {
 }
 
 #[bench]
+fn bench_tiny_my_sequential(b: &mut Bencher) {
+    let tiny = &["a"];
+    b.iter(|| parallel_letter_frequency::frequency(tiny, 1));
+}
+
+#[bench]
 fn bench_tiny_sequential(b: &mut Bencher) {
     let tiny = &["a"];
     b.iter(|| frequency(tiny));
@@ -24,6 +30,12 @@ fn bench_small_parallel(b: &mut Bencher) {
 }
 
 #[bench]
+fn bench_small_my_sequential(b: &mut Bencher) {
+    let texts = all_texts(1);
+    b.iter(|| parallel_letter_frequency::frequency(&texts, 1));
+}
+
+#[bench]
 fn bench_small_sequential(b: &mut Bencher) {
     let texts = all_texts(1);
     b.iter(|| frequency(&texts));
@@ -33,6 +45,12 @@ fn bench_small_sequential(b: &mut Bencher) {
 fn bench_large_parallel(b: &mut Bencher) {
     let texts = all_texts(30);
     b.iter(|| parallel_letter_frequency::frequency(&texts, 3));
+}
+
+#[bench]
+fn bench_large_my_squential(b: &mut Bencher) {
+    let texts = all_texts(30);
+    b.iter(|| parallel_letter_frequency::frequency(&texts, 1));
 }
 
 #[bench]
